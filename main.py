@@ -1,67 +1,48 @@
-from crawl4ai import AsyncWebCrawler
-from langchain_chroma import Chroma
-from langchain_ollama import OllamaEmbeddings, OllamaLLM
-from langchain_community.chains import create_retrieval_chain
+import asyncio
+from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
+from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
+from crawl4ai.content_scraping_strategy import LXMLWebScrapingStrategy
+from crawl4ai.deep_crawling.filters import URLPatternFilter, FilterChain
 
-# Step 1: Crawl data
-async def crawl_site(url: str):
-    crawler = AsyncWebCrawler()
-    result = await crawler.arun(url)
-    
-    return result
+from pprint import pprint
+import json
 
-
-# main program.
-def main():
+async def main():
     
-    # configuration.
-    OLLAMA_MODEL = "mistral"
-    OLLAMA_EMBEDDING_MODEL = "mxbai-embed-large:latest"
-    PRESIST_DIRECTORY = "./chroma_job_db"
+    # only follow urls ending with type=standard
+    url_filter = URLPatternFilter(patterns=[r'type=standard$'])
+    filter_chain = FilterChain(filters=[url_filter])
     
-    # initiate Ollama LLM.
-    LLM = OllamaLLM(model=OLLAMA_MODEL)
-    
-    # initiate Ollama embeddings
-    EMBEDDINGS = OllamaEmbeddings(model=OLLAMA_EMBEDDING_MODEL)
-    
-    # initiate vectorstore
-    vector_store = Chroma(
-        embedding_function=EMBEDDINGS, 
-        collection_name="jobs_collection",
-        persist_directory=PRESIST_DIRECTORY,
+    # Configure a 2-level deep crawl
+    config = CrawlerRunConfig(
+        deep_crawl_strategy=BFSDeepCrawlStrategy(
+            max_depth=3, 
+            include_external=False,
+            filter_chain=filter_chain
+        ),
+        scraping_strategy=LXMLWebScrapingStrategy(),
+        verbose=True
     )
-
-    # chat loop.
-    while True:
-        question = input("Enter the keyword for jobs u wanna search (type 'q' for quit): ")
-
-        # type q for breaking the chat loop.
-        if question.lower() == "q":
-            break
-        
-        # Crawl the web page.
-        url = f"https://hk.jobsdb.com/{question}-jobs"
-        docs = [crawl_site(url=url)]
-        
-        # Save docs to vectorstore.
-        vector_store.add_texts(texts=docs)
-        
-        # Query with LangChain
-        retriever=vector_store.as_retriever()
-        # qa = RetrievalQA.from_chain_type(
-        #     llm=OllamaLLM(model=OLLAMA_MODEL),
-        #     retriever=retriever
-        # )
-        
-        qa = create_retrieval_chain(retriever=retriever, )
-        
-        # return the summary.
-        print(qa.run(f"Summarize the latest job ads for {question} related jobs."))
+    
+    async with AsyncWebCrawler() as crawler:
+        while True: 
+            keyword = input("Enter job keyword to search (or type 'q' to quit):")
+            if keyword.lower() == "q":
+                print("Exiting the program.")
+                break
+            
+            # get all the urls for each job ad.
+            results = await crawler.arun(f"https://hk.jobsdb.com/{keyword}-jobs", config=config)
+            print(f"Crawled {len(results)} pages in total")
+            jobAd_urls = [result.url for result in results if result.url.endswith("type=standard")]
+            
+            # scrape all the information (title, company, location, salary, etc.) from each job ad page.
+            for i, item in enumerate(jobAd_urls):
+                print(f"No. {i}: {item}")
 
     return 
 
 
-# main entry point.
+# main entry point.        
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
