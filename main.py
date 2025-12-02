@@ -35,10 +35,14 @@ async def main():
             results = await crawler.arun(f"https://hk.jobsdb.com/{keyword}-jobs", config=config)
             print(f"Crawled {len(results)} pages in total")
             jobAd_urls = [result.url for result in results if result.url.endswith("type=standard")]
+            jobAd_markdowns = [result.markdown for result in results if result.url.endswith("type=standard")]
             
             # scrape all the information (title, company, location, salary, etc.) from each job ad page.
-            for i, item in enumerate(jobAd_urls):
-                print(f"No. {i}: {item}")
+            for url, jobAd in zip(jobAd_urls, jobAd_markdowns):
+                print(f"Job Ad URL: {url}")
+                print("Job Ad Content:")
+                print(jobAd)
+                print("-" * 80)
 
     return 
 
