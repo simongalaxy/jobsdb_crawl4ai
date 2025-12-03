@@ -1,54 +1,93 @@
+"""JobsDB Crawler - Automated job advertisement extraction from JobsDB Hong Kong."""
+
 import asyncio
-from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
-from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
-from crawl4ai.content_scraping_strategy import LXMLWebScrapingStrategy
-from crawl4ai.deep_crawling.filters import URLPatternFilter, FilterChain
-
-from pprint import pprint
 import json
+import logging
+from typing import Optional
 
-async def main():
-    
-    # only follow urls ending with type=standard
-    url_filter = URLPatternFilter(patterns=[r'type=standard$'])
-    filter_chain = FilterChain(filters=[url_filter])
-    
-    # Configure a 2-level deep crawl
-    config = CrawlerRunConfig(
-        deep_crawl_strategy=BFSDeepCrawlStrategy(
-            max_depth=3, 
-            include_external=False,
-            filter_chain=filter_chain
-        ),
-        scraping_strategy=LXMLWebScrapingStrategy(),
-        verbose=True
-    )
-    
+from crawl4ai import AsyncWebCrawler
+
+from tools.crawler_config import create_crawler_config, create_url_filter
+from tools.models import JobAd
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+
+async def process_search_results(crawler: AsyncWebCrawler, results) -> int:
+    """
+    Process and display crawled results.
+
+    Args:
+        crawler: The AsyncWebCrawler instance
+        results: Crawled results from the crawler
+
+    Returns:
+        Number of successfully extracted job ads
+    """
+    extracted_count = 0
+
+    for result in results:
+        if result.success:
+            try:
+                data = json.loads(result.extracted_content)
+                logger.info(f"Successfully extracted from {result.url}")
+                logger.info(f"Extracted Data: {json.dumps(data, indent=2)}")
+                extracted_count += 1
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON from {result.url}: {e}")
+        else:
+            logger.error(f"Crawling failed for {result.url}: {result.error_message}")
+
+    return extracted_count
+
+
+async def search_jobs(crawler: AsyncWebCrawler, keyword: str) -> None:
+    """
+    Search for jobs with the given keyword and extract job advertisements.
+
+    Args:
+        crawler: The AsyncWebCrawler instance
+        keyword: Job search keyword
+    """
+    logger.info(f"Searching for jobs with keyword: {keyword}")
+
+    filter_chain = create_url_filter()
+    crawl_config = create_crawler_config(filter_chain)
+
+    search_url = f"https://hk.jobsdb.com/{keyword}-jobs"
+    logger.info(f"Starting crawl from: {search_url}")
+
+    results = await crawler.arun(url=search_url, config=crawl_config)
+    extracted_count = await process_search_results(crawler, results)
+
+    logger.info(f"Extraction complete. Successfully extracted {extracted_count} job ads.")
+
+
+async def main() -> None:
+    """Main entry point for the JobsDB crawler application."""
+    logger.info("Starting JobsDB Crawler")
+
     async with AsyncWebCrawler() as crawler:
-        while True: 
-            keyword = input("Enter job keyword to search (or type 'q' to quit):")
+        while True:
+            keyword = input("\nEnter job keyword to search (or type 'q' to quit): ").strip()
+
             if keyword.lower() == "q":
-                print("Exiting the program.")
+                logger.info("Exiting the program.")
                 break
-            
-            # get all the urls for each job ad.
-            search_url = f"https://hk.jobsdb.com/{keyword}-jobs"
-            results = await crawler.arun(url=search_url, config=config)
-            print(f"Crawled {len(results)} pages in total")
-            jobAd_urls = [result.url for result in results if result.url.endswith("type=standard")]
-            jobAd_markdowns = [result.markdown for result in results if result.url.endswith("type=standard")]
-            
-            # scrape all the information (title, company, location, salary, etc.) from each job ad page.
-            
-            for url, jobAd in zip(jobAd_urls, jobAd_markdowns):
-                print(f"Job Ad URL: {url}")
-                print("Job Ad Content:")
-                print(jobAd)
-                print("-" * 80)
 
-    return 
+            if not keyword:
+                logger.warning("Please enter a valid keyword.")
+                continue
+
+            try:
+                await search_jobs(crawler, keyword)
+            except Exception as e:
+                logger.error(f"An error occurred during search: {e}", exc_info=True) 
 
 
-# main entry point.        
 if __name__ == "__main__":
     asyncio.run(main())
